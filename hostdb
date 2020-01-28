@@ -1,0 +1,188 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use feature qw( say );
+use Getopt::Std qw( getopts );
+use MongoDB;
+use Regexp::Common qw( net );
+
+my ( $client, $database, $collection );
+
+sub list {
+  my $documents = $collection->find->sort( { Hostname => 1 } );
+
+  while ( my $document = $documents->next ) {
+    my $message = sprintf '%-10s %-39s %-31s', $document->{Hostname},
+                                               join( ' ', @{$document->{IPv6}} ),
+                                               join( ' ', @{$document->{IPv4}} );
+    say $message;
+  }
+
+  return 0;
+}
+
+sub search {
+  if ( @ARGV < 2 ) {
+    say STDERR "Usage: $0 search query";
+    return 1;
+  }
+  my $query = $ARGV[1];
+
+  my $document;
+  if ( $query =~ /$RE{net}{IPv6}/ ) {
+    $document = $collection->find_one( { IPv6 => $query } );
+  } elsif ( $query =~ /$RE{net}{IPv4}/ ) {
+    $document = $collection->find_one( { IPv4 => $query } );
+  } else {
+    $document = $collection->find_one( { Hostname => $query } );
+  }
+
+  if ( defined $document ) {
+    my $message = sprintf '%-10s %-39s %-31s', $document->{Hostname},
+                                               join( ' ', @{$document->{IPv6}} ),
+                                               join( ' ', @{$document->{IPv4}} );
+    say $message;
+    return 0;
+  } else {
+    say STDERR 'not found';
+    return 1;
+  }
+}
+
+sub add {
+  if ( @ARGV < 4 ) {
+    say STDERR "Usage: $0 add hostname ipv6 ipv4";
+    return 1;
+  }
+  my $hostname = $ARGV[1];
+  my @ipv6     = split /,/, $ARGV[2];
+  my @ipv4     = split /,/, $ARGV[3];
+
+  my $result = $collection->insert_one( { Hostname => $hostname,
+                                          IPv6     => \@ipv6,
+                                          IPv4     => \@ipv4 } );
+
+  if ( defined $result ) {
+    say STDERR 'success';
+    return 0;
+  } else {
+    say STDERR 'failed';
+    return 1;
+  }
+}
+
+sub delete {
+  if ( @ARGV < 2 ) {
+    say STDERR "Usage: $0 delete query";
+    return 1;
+  }
+  my $query = $ARGV[1];
+
+  my $document;
+  if ( $query =~ /$RE{net}{IPv6}/ ) {
+    $document = $collection->find_one_and_delete( { IPv6 => $query } );
+  } elsif ( $query =~ /$RE{net}{IPv4}/ ) {
+    $document = $collection->find_one_and_delete( { IPv4 => $query } );
+  } else {
+    $document = $collection->find_one_and_delete( { Hostname => $query } );
+  }
+
+  if ( defined $document ) {
+    say STDERR 'success';
+    return 0;
+  } else {
+    say STDERR 'failed';
+    return 1;
+  }
+}
+
+sub update {
+  if ( @ARGV < 3 ) {
+    say STDERR "Usage: $0 update hostname value";
+    return 1;
+  }
+  my $hostname = $ARGV[1];
+  my $update   = $ARGV[2];
+
+  my $document;
+  if ( $update =~ /$RE{net}{IPv6}/ ) {
+    my @ipv6 = split /,/, $update;
+    $document = $collection->find_one_and_update( { Hostname => $hostname }, { '$set' => { IPv6 => \@ipv6 } } );
+  } elsif ( $update =~ /$RE{net}{IPv4}/ ) {
+    my @ipv4 = split /,/, $update;
+    $document = $collection->find_one_and_update( { Hostname => $hostname }, { '$set' => { IPv4 => \@ipv4 } } );
+  } else {
+    $document = $collection->find_one_and_update( { Hostname => $hostname }, { '$set' => { Hostname => $update } } );
+  }
+
+  if ( defined $document ) {
+    say STDERR 'success';
+    return 0;
+  } else {
+    say STDERR 'failed';
+    return 1;
+  }
+}
+
+sub drop {
+  $collection->drop;
+
+  return 0;
+}
+
+sub help {
+  &do_help;
+
+  return 0;
+}
+
+my %dispatch_table = ( list   => \&list,
+                       search => \&search,
+                       s      => \&search,
+                       add    => \&add,
+                       delete => \&delete,
+                       update => \&update,
+                       drop   => \&drop,
+                       help   => \&help );
+
+sub do_help {
+  say STDERR "Usage: $0 option command ...";
+  say STDERR 'options:';
+  say STDERR "\t-h hostname  (default: localhost)";
+  say STDERR "\t-p port      (default: 27017)";
+  say STDERR "\t-d database_name";
+  say STDERR "\t-c collection_name";
+  say STDERR 'commands: ', join( ' ', sort( keys %dispatch_table ) );
+}
+
+my %opts;
+getopts( 'c:d:h:p:', \%opts );
+my $hostname        = $opts{h} // 'localhost';
+my $port            = $opts{p} // 27017;
+my $database_name   = $opts{d};
+my $collection_name = $opts{c};
+if ( not defined $database_name or not defined $collection_name ) {
+  &do_help;
+  exit 1;
+}
+
+if ( @ARGV < 1 ) {
+  &do_help;
+  exit 1;
+}
+my $command = $ARGV[0];
+
+$client     = MongoDB::MongoClient->new( host => $hostname, port => $port );
+$database   = $client->get_database( $database_name );
+$collection = $database->get_collection( $collection_name );
+
+my $result;
+if ( exists $dispatch_table{$command} ) {
+  $result = $dispatch_table{$command}->();
+} else {
+  &do_help;
+  $result = 1;
+}
+
+exit $result;
