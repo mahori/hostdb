@@ -1,0 +1,111 @@
+#!/usr/bin/env ruby
+
+require 'logger'
+require 'mongo'
+require 'optparse'
+require 'resolv'
+
+def list(collection)
+  docs = collection.find.sort(Hostname: 1)
+
+  docs.each do |doc|
+    hostname = doc.fetch('Hostname')
+    ipv6 = doc.fetch('IPv6').join(' ')
+    ipv4 = doc.fetch('IPv4').join(' ')
+
+    message = sprintf('%-10s %-39s %-31s', hostname, ipv6, ipv4)
+    puts message
+  end
+end
+
+def search(collection, s)
+  if s =~ Resolv::IPv6::Regex
+    docs = collection.find(IPv6: s)
+  elsif s =~ Resolv::IPv4::Regex
+    docs = collection.find(IPv4: s)
+  else
+    docs = collection.find(Hostname: s)
+  end
+
+  if docs.count == 0
+    STDERR.puts 'not found'
+    return 1
+  end
+
+  docs.each do |doc|
+    hostname = doc.fetch('Hostname')
+    ipv6 = doc.fetch('IPv6').join(' ')
+    ipv4 = doc.fetch('IPv4').join(' ')
+
+    message = sprintf('%-10s %-39s %-31s', hostname, ipv6, ipv4)
+    puts message
+  end
+
+  return 0
+end
+
+def add(collection, hostname, ipv6, ipv4)
+  ipv6_list = ipv6.split(',')
+  ipv4_list = ipv4.split(',')
+
+  result = collection.insert_one({Hostname: hostname, IPv6: ipv6_list, IPv4: ipv4_list})
+
+  return 0
+end
+
+def delete(collection, s)
+  if s =~ Resolv::IPv6::Regex
+    collection.find_one_and_delete(IPv6: s)
+  elsif s =~ Resolv::IPv4::Regex
+    collection.find_one_and_delete(IPv4: s)
+  else
+    collection.find_one_and_delete(Hostname: s)
+  end
+
+  return 0
+end
+
+def update(collection, hostname, s)
+  regex6 = sprintf('%s(?:,%s)*', Resolv::IPv6::Regex, Resolv::IPv6::Regex)
+  regex6 = sprintf('\A%s\z', regexp6.gsub(/\\A|\\z/, ''))
+
+  regex4 = sprintf('%s(?:,%s)*', Resolv::IPv4::Regex, Resolv::IPv4::Regex)
+  regex4 = sprintf('\A%s\z', regexp4.gsub(/\\A|\\z/, ''))
+
+  if s.match(regex6)
+    ipv6 = s.split(',')
+    collection.find_one_and_update({Hostname: hostname}, {'$set' => {IPv6: ipv6}})
+  elsif s.match(regex4)
+    ipv4 = s.split(',')
+    collection.find_one_and_update({Hostname: hostname}, {'$set' => {IPv4: ipv4}})
+  else
+    collection.find_one_and_update({Hostname: hostname}, {'$set' => {Hostname: s}})
+  end
+
+  return 0
+end
+
+opts = ARGV.getopts('c:d:h:p:')
+hostname = opts['h']
+port = opts['p'] || 27017
+db_name = opts['d']
+collection_name = opts['c']
+
+uri = sprintf('mongodb://%s:%d', hostname, port)
+logger = Logger.new(STDERR)
+logger.level = Logger::Severity::INFO
+client = Mongo::Client.new(uri, database: db_name, logger: logger)
+collection = client[collection_name]
+
+case ARGV[0]
+when 'l', 'list'
+  list(collection)
+when 's', 'search'
+  search(collection, ARGV[1])
+when 'add'
+  add(collection, ARGV[1], ARGV[2], ARGV[3])
+when 'delete'
+  delete(collection, ARGV[1])
+when 'update'
+  update(collection, ARGV[1], ARGV[2])
+end
