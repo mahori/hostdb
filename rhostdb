@@ -1,111 +1,86 @@
 #!/usr/bin/env ruby
 
-require 'logger'
-require 'mongo'
+require 'google/cloud/firestore'
 require 'optparse'
 require 'resolv'
 
-def list(collection)
-  docs = collection.find.sort(Hostname: 1)
+HOSTS_COLLECTION_NAME = 'Hosts'
 
-  docs.each do |doc|
-    hostname = doc.fetch('Hostname')
-    ipv6 = doc.fetch('IPv6').join(' ')
-    ipv4 = doc.fetch('IPv4').join(' ')
+def list(firestore)
+  hosts_ref = firestore.col(HOSTS_COLLECTION_NAME)
+  hosts_ref.get do |host|
+    name = host[:Name]
+    ipv6 = host[:IPv6].join(' ')
+    ipv4 = host[:IPv4].join(' ')
 
-    message = sprintf('%-10s %-39s %-31s', hostname, ipv6, ipv4)
+    message = sprintf('%-10s %-39s %-31s', name, ipv6, ipv4)
     puts message
   end
 end
 
-def search(collection, s)
+def search(firestore, s)
+  hosts_ref = firestore.col(HOSTS_COLLECTION_NAME)
+
   if s =~ Resolv::IPv6::Regex
-    docs = collection.find(IPv6: s)
+    query = hosts_ref.where('IPv6', 'array-contains', s)
   elsif s =~ Resolv::IPv4::Regex
-    docs = collection.find(IPv4: s)
+    query = hosts_ref.where('IPv4', 'array-contains', s)
   else
-    docs = collection.find(Hostname: s)
+    query = hosts_ref.where('Name', '=', s)
   end
 
-  if docs.count == 0
-    STDERR.puts 'not found'
-    return 1
-  end
+  query.get do |host|
+    name = host[:Name]
+    ipv6 = host[:IPv6].join(' ')
+    ipv4 = host[:IPv4].join(' ')
 
-  docs.each do |doc|
-    hostname = doc.fetch('Hostname')
-    ipv6 = doc.fetch('IPv6').join(' ')
-    ipv4 = doc.fetch('IPv4').join(' ')
-
-    message = sprintf('%-10s %-39s %-31s', hostname, ipv6, ipv4)
+    message = sprintf('%-10s %-39s %-31s', name, ipv6, ipv4)
     puts message
   end
-
-  return 0
 end
 
-def add(collection, hostname, ipv6, ipv4)
+def add(firestore, name, ipv6, ipv4)
   ipv6_list = ipv6.split(',')
   ipv4_list = ipv4.split(',')
 
-  result = collection.insert_one({Hostname: hostname, IPv6: ipv6_list, IPv4: ipv4_list})
-
-  return 0
+  doc_name = HOSTS_COLLECTION_NAME + '/' + name
+  doc_ref = firestore.doc(doc_name)
+  doc_ref.set(
+    Type: 'server',
+    Name: name,
+    IPv6: ipv6_list,
+    IPv4: ipv4_list
+  )
 end
 
-def delete(collection, s)
-  if s =~ Resolv::IPv6::Regex
-    collection.find_one_and_delete(IPv6: s)
-  elsif s =~ Resolv::IPv4::Regex
-    collection.find_one_and_delete(IPv4: s)
-  else
-    collection.find_one_and_delete(Hostname: s)
-  end
-
-  return 0
+def delete(firestore, name)
+  doc_name = HOSTS_COLLECTION_NAME + '/' + name
+  doc_ref = firestore.doc(doc_name)
+  doc_ref.delete
 end
 
-def update(collection, hostname, s)
-  regex6 = sprintf('%s(?:,%s)*', Resolv::IPv6::Regex, Resolv::IPv6::Regex)
-  regex6 = sprintf('\A%s\z', regexp6.gsub(/\\A|\\z/, ''))
-
-  regex4 = sprintf('%s(?:,%s)*', Resolv::IPv4::Regex, Resolv::IPv4::Regex)
-  regex4 = sprintf('\A%s\z', regexp4.gsub(/\\A|\\z/, ''))
-
-  if s.match(regex6)
-    ipv6 = s.split(',')
-    collection.find_one_and_update({Hostname: hostname}, {'$set' => {IPv6: ipv6}})
-  elsif s.match(regex4)
-    ipv4 = s.split(',')
-    collection.find_one_and_update({Hostname: hostname}, {'$set' => {IPv4: ipv4}})
-  else
-    collection.find_one_and_update({Hostname: hostname}, {'$set' => {Hostname: s}})
-  end
-
-  return 0
+opts = ARGV.getopts('p:')
+project_id = opts['p']
+unless project_id
+  STDERR.puts 'project id not defined'
+  exit 1
 end
 
-opts = ARGV.getopts('c:d:h:p:')
-hostname = opts['h']
-port = opts['p'] || 27017
-db_name = opts['d']
-collection_name = opts['c']
+firestore = Google::Cloud::Firestore.new(project_id: project_id)
 
-uri = sprintf('mongodb://%s:%d', hostname, port)
-logger = Logger.new(STDERR)
-logger.level = Logger::Severity::INFO
-client = Mongo::Client.new(uri, database: db_name, logger: logger)
-collection = client[collection_name]
+unless ARGV[0]
+  list(firestore)
+end
 
 case ARGV[0]
 when 'l', 'list'
-  list(collection)
+  list(firestore)
 when 's', 'search'
-  search(collection, ARGV[1])
-when 'add'
-  add(collection, ARGV[1], ARGV[2], ARGV[3])
-when 'delete'
-  delete(collection, ARGV[1])
-when 'update'
-  update(collection, ARGV[1], ARGV[2])
+  search(firestore, ARGV[1])
+when 'a', 'add'
+  add(firestore, ARGV[1], ARGV[2], ARGV[3])
+when 'd', 'delete'
+  delete(firestore, ARGV[1])
+else
+  search(firestore, ARGV[0])
 end
