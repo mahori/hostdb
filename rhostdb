@@ -61,26 +61,25 @@ end
 
 opts = ARGV.getopts('p:')
 project_id = opts['p']
-unless project_id
+if project_id.nil?
   STDERR.puts 'project id not defined'
   exit 1
 end
 
 firestore = Google::Cloud::Firestore.new(project_id: project_id)
 
-unless ARGV[0]
-  list(firestore)
-end
-
-case ARGV[0]
-when 'l', 'list'
+command = ARGV.shift
+case command
+when nil, 'l', 'list'
   list(firestore)
 when 's', 'search'
-  search(firestore, ARGV[1])
+  search(firestore, *ARGV)
 when 'a', 'add'
-  add(firestore, ARGV[1], ARGV[2], ARGV[3])
+  add(firestore, *ARGV)
 when 'd', 'delete'
-  delete(firestore, ARGV[1])
+  delete(firestore, *ARGV)
 else
-  search(firestore, ARGV[0])
+  search(firestore, command)
 end
+
+exit 0
