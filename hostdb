@@ -4,9 +4,8 @@ require 'google/cloud/firestore'
 require 'optparse'
 require 'resolv'
 
-def list(firestore, collection_name)
-  hosts_ref = firestore.col(collection_name)
-  hosts_ref.get do |host|
+def list(collection)
+  collection.get do |host|
     name = host[:Name]
     ipv6 = host[:IPv6].join(' ')
     ipv4 = host[:IPv4].join(' ')
@@ -16,15 +15,13 @@ def list(firestore, collection_name)
   end
 end
 
-def search(firestore, collection_name, s)
-  hosts_ref = firestore.col(collection_name)
-
+def search(collection, s)
   if s =~ Resolv::IPv6::Regex
-    query = hosts_ref.where('IPv6', 'array-contains', s)
+    query = collection.where('IPv6', 'array-contains', s)
   elsif s =~ Resolv::IPv4::Regex
-    query = hosts_ref.where('IPv4', 'array-contains', s)
+    query = collection.where('IPv4', 'array-contains', s)
   else
-    query = hosts_ref.where('Name', '=', s)
+    query = collection.where('Name', '=', s)
   end
 
   query.get do |host|
@@ -37,12 +34,11 @@ def search(firestore, collection_name, s)
   end
 end
 
-def add(firestore, collection_name, name, ipv6, ipv4)
+def add(collection, name, ipv6, ipv4)
   ipv6_list = ipv6.split(',')
   ipv4_list = ipv4.split(',')
 
-  doc_name = collection_name + '/' + name
-  doc_ref = firestore.doc(doc_name)
+  doc_ref = collection.doc(name)
   doc_ref.set(
     Type: 'server',
     Name: name,
@@ -51,9 +47,8 @@ def add(firestore, collection_name, name, ipv6, ipv4)
   )
 end
 
-def delete(firestore, collection_name, name)
-  doc_name = collection_name + '/' + name
-  doc_ref = firestore.doc(doc_name)
+def delete(collection, name)
+  doc_ref = collection.doc(name)
   doc_ref.delete
 end
 
@@ -66,19 +61,20 @@ if project_id.nil? or collection_name.nil?
 end
 
 firestore = Google::Cloud::Firestore.new(project_id: project_id)
+collection = firestore.col(collection_name)
 
 command = ARGV.shift
 case command
 when nil, 'l', 'list'
-  list(firestore, collection_name)
+  list(collection)
 when 's', 'search'
-  search(firestore, collection_name, *ARGV)
+  search(collection, *ARGV)
 when 'a', 'add'
-  add(firestore, collection_name, *ARGV)
+  add(collection, *ARGV)
 when 'd', 'delete'
-  delete(firestore, collection_name, *ARGV)
+  delete(collection, *ARGV)
 else
-  search(firestore, collection_name, command)
+  search(collection, command)
 end
 
 exit 0
