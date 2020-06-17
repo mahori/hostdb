@@ -4,8 +4,8 @@ require 'google/cloud/firestore'
 require 'optparse'
 require 'resolv'
 
-def list(collection)
-  collection.get do |host|
+def print_documents(query)
+  query.get do |host|
     name = host[:Name]
     ipv6 = host[:IPv6].join(' ')
     ipv4 = host[:IPv4].join(' ')
@@ -13,6 +13,10 @@ def list(collection)
     message = sprintf('%-14s  %-39s  %-31s', name, ipv6, ipv4)
     puts message
   end
+end
+
+def list(collection)
+  print_documents(collection)
 end
 
 def search(collection, s)
@@ -24,14 +28,7 @@ def search(collection, s)
     query = collection.where('Name', '=', s)
   end
 
-  query.get do |host|
-    name = host[:Name]
-    ipv6 = host[:IPv6].join(' ')
-    ipv4 = host[:IPv4].join(' ')
-
-    message = sprintf('%-14s  %-39s  %-31s', name, ipv6, ipv4)
-    puts message
-  end
+  print_documents(query)
 end
 
 def add(collection, name, ipv6, ipv4)
