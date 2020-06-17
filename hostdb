@@ -36,12 +36,7 @@ def add(collection, name, ipv6, ipv4)
   ipv4_list = ipv4.split(',')
 
   doc_ref = collection.doc(name)
-  doc_ref.set(
-    Type: 'server',
-    Name: name,
-    IPv6: ipv6_list,
-    IPv4: ipv4_list
-  )
+  doc_ref.set({ Name: name, IPv6: ipv6_list, IPv4: ipv4_list })
 end
 
 def delete(collection, name)
