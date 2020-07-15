@@ -5,12 +5,29 @@ require 'optparse'
 require 'resolv'
 
 def print_documents(query)
-  query.get do |host|
-    name = host[:Name]
-    ipv6 = host[:IPv6].join(' ')
-    ipv4 = host[:IPv4].join(' ')
+  hosts = query.get
 
-    message = sprintf('%-14s  %-39s  %-31s', name, ipv6, ipv4)
+  name_length = hosts.map { |host| host[:Name].length }
+  max_name_length = name_length.max
+
+  ipv6_size = hosts.map { |host| host[:IPv6].size }
+  max_ipv6_size = ipv6_size.max
+
+  ipv4_size = hosts.map { |host| host[:IPv4].size }
+  max_ipv4_size = ipv4_size.max
+
+  hosts.each do |host|
+    format = sprintf('%%-%ds', max_name_length)
+    message = sprintf(format, host[:Name])
+
+    max_ipv6_size.times do |i|
+      message += sprintf('  %-39s', host[:IPv6][i])
+    end
+
+    max_ipv4_size.times do |i|
+      message += sprintf('  %-15s', host[:IPv4][i])
+    end
+
     puts message
   end
 end
