@@ -4,9 +4,7 @@ require 'google/cloud/firestore'
 require 'optparse'
 require 'resolv'
 
-def print_documents(query)
-  hosts = query.get
-
+def print_documents(hosts)
   name_length = hosts.map { |host| host[:Name].length }
   max_name_length = name_length.max
 
@@ -33,19 +31,29 @@ def print_documents(query)
 end
 
 def list(collection)
-  print_documents(collection)
+  hosts = collection.get
+
+  print_documents(hosts)
 end
 
-def search(collection, s)
-  if s =~ Resolv::IPv6::Regex
-    query = collection.where('IPv6', 'array-contains', s)
-  elsif s =~ Resolv::IPv4::Regex
-    query = collection.where('IPv4', 'array-contains', s)
-  else
-    query = collection.where('Name', '=', s)
+def search(collection, *a)
+  hosts = []
+
+  a.each do |s|
+    if s =~ Resolv::IPv6::Regex
+      query = collection.where('IPv6', 'array-contains', s)
+    elsif s =~ Resolv::IPv4::Regex
+      query = collection.where('IPv4', 'array-contains', s)
+    else
+      query = collection.where('Name', '=', s)
+    end
+
+    query.get do |host|
+      hosts.push(host)
+    end
   end
 
-  print_documents(query)
+  print_documents(hosts)
 end
 
 def add(collection, name, ipv6, ipv4)
@@ -83,7 +91,8 @@ when 'a', 'add'
 when 'd', 'delete'
   delete(collection, *ARGV)
 else
-  search(collection, command)
+  ARGV.unshift(command)
+  search(collection, *ARGV)
 end
 
 exit 0
