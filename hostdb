@@ -1,29 +1,29 @@
 #!/usr/bin/env ruby
 
-require 'google/cloud/firestore'
+require 'mongo'
 require 'optparse'
 require 'resolv'
 
-def print_documents(hosts)
-  name_length = hosts.map { |host| host[:Name].length }
+def print_documents(documents)
+  name_length = documents.map { |document| document[:Name].length }
   max_name_length = name_length.max
 
-  ipv6_size = hosts.map { |host| host[:IPv6].size }
+  ipv6_size = documents.map { |document| document[:IPv6].size }
   max_ipv6_size = ipv6_size.max
 
-  ipv4_size = hosts.map { |host| host[:IPv4].size }
+  ipv4_size = documents.map { |document| document[:IPv4].size }
   max_ipv4_size = ipv4_size.max
 
-  hosts.each do |host|
+  documents.each do |document|
     format = sprintf('%%-%ds', max_name_length)
-    message = sprintf(format, host[:Name])
+    message = sprintf(format, document[:Name])
 
     max_ipv6_size.times do |i|
-      message += sprintf('  %-39s', host[:IPv6][i])
+      message += sprintf('  %-39s', document[:IPv6][i])
     end
 
     max_ipv4_size.times do |i|
-      message += sprintf('  %-15s', host[:IPv4][i])
+      message += sprintf('  %-15s', document[:IPv4][i])
     end
 
     puts message
@@ -31,54 +31,67 @@ def print_documents(hosts)
 end
 
 def list(collection)
-  hosts = collection.get
+  documents = collection.find(nil, { :sort => { :Name => 1 } })
 
-  print_documents(hosts)
+  print_documents(documents)
 end
 
 def search(collection, *a)
-  hosts = []
+  documents = []
 
   a.each do |s|
     if s =~ Resolv::IPv6::Regex
-      query = collection.where('IPv6', 'array-contains', s)
+      filter = { :IPv6 => s }
     elsif s =~ Resolv::IPv4::Regex
-      query = collection.where('IPv4', 'array-contains', s)
+      filter = { :IPv4 => s }
     else
-      query = collection.where('Name', '=', s)
+      filter = { :Name => s }
     end
 
-    query.get do |host|
-      hosts.push(host)
+    docs = collection.find(filter, { :sort => { :Name => 1 } })
+    docs.each do |doc|
+      documents.push(doc)
     end
   end
 
-  print_documents(hosts)
+  print_documents(documents)
 end
 
-def add(collection, name, ipv6, ipv4)
-  ipv6_list = ipv6.split(',')
-  ipv4_list = ipv4.split(',')
+def add(collection, name, *a)
+  ipv6_list = []
+  ipv4_list = []
 
-  doc_ref = collection.doc(name)
-  doc_ref.set({ Name: name, IPv6: ipv6_list, IPv4: ipv4_list })
+  a.each do |s|
+    if s =~ Resolv::IPv6::Regex
+      ipv6_list.push(s)
+    elsif s =~ Resolv::IPv4::Regex
+      ipv4_list.push(s)
+    end
+  end
+
+  document = { :Name => name, :IPv6 => ipv6_list, :IPv4 => ipv4_list }
+  collection.insert_one(document)
 end
 
-def delete(collection, name)
-  doc_ref = collection.doc(name)
-  doc_ref.delete
+def delete(collection, *a)
+  a.each do |s|
+    filter = { :Name => s }
+
+    collection.find_one_and_delete(filter)
+  end
 end
 
-opts = ARGV.getopts('c:p:')
-project_id = opts['p']
-collection_name = opts['c']
-if project_id.nil? or collection_name.nil?
-  STDERR.puts 'options must be specified'
-  exit 1
-end
+opts = ARGV.getopts('h:P:u:p:')
+host = opts['h'] ? opts['h'] : 'localhost'
+port = opts['P'] ? opts['P'] : '27017'
+user = opts['u']
+pass = opts['p']
 
-firestore = Google::Cloud::Firestore.new(project_id: project_id)
-collection = firestore.col(collection_name)
+Mongo::Logger.logger = Logger.new(STDERR)
+Mongo::Logger.level = Logger::INFO
+
+client = Mongo::Client.new([ host + ':' + port ], :user => user, :password => pass, :database => 'hostinfo')
+collection = Mongo::Collection.new(client.database, 'ip')
 
 command = ARGV.shift
 case command
@@ -87,12 +100,15 @@ when nil, 'l', 'list'
 when 's', 'search'
   search(collection, *ARGV)
 when 'a', 'add'
-  add(collection, *ARGV)
+  name = ARGV.shift
+  add(collection, name, *ARGV)
 when 'd', 'delete'
   delete(collection, *ARGV)
 else
   ARGV.unshift(command)
   search(collection, *ARGV)
 end
+
+client.close
 
 exit 0
